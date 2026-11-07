@@ -1,6 +1,6 @@
 // Caches the app shell so it opens instantly and works as an installed app.
 // Station lists and audio always come from the network.
-const CACHE = 'local-radio-v3';
+const CACHE = 'local-radio-v4';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-180.png', 'icon-maskable.png'];
 
 self.addEventListener('install', e => {

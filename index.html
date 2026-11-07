@@ -88,6 +88,7 @@
   .play { width: 56px; height: 56px; flex: none; border-radius: 50%; border: 0; background: var(--accent);
     color: #1a1205; font-size: 22px; display: grid; place-items: center; }
   .play:disabled { opacity: .4; }
+  .pseek { width: 40px; height: 44px; flex: none; border: 0; background: none; font-size: 18px; color: var(--text); }
   #pState { font-size: 13px; color: var(--muted); }
   #pState.err { color: var(--bad); }
   #pState.live::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
@@ -143,7 +144,9 @@
       <div class="name" id="pName">Pick a station</div>
       <div id="pState">Tap any station to start listening</div>
     </div>
+    <button class="pseek" id="pSeekDown" aria-label="Seek down">⏮</button>
     <button class="play" id="playBtn" aria-label="Play" disabled>▶</button>
+    <button class="pseek" id="pSeekUp" aria-label="Seek up">⏭</button>
   </div>
   <label class="vol">🔈 <input type="range" id="vol" min="0" max="1" step="0.05" value="1" aria-label="Volume"> 🔊</label>
 </div>
@@ -469,9 +472,7 @@
     if (list.length === 1 && current && list[0].id === current.id) {
       setStatusBriefly('This is the only station found. Widen the range to find more.'); return;
     }
-    play(list[i]);
-    const el = document.querySelector(`.station[data-id="${CSS.escape(list[i].id)}"]`);
-    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    play(list[i]);  // don't scroll: keep the seek buttons under your thumb
   }
   // Tap or drag on the dial to tune to the nearest station.
   function dialTune(clientX) {
@@ -489,6 +490,8 @@
   $('dial').addEventListener('pointerup', () => { if (dragging) play(dragging); dragging = null; });
   $('seekUp').onclick = () => seek(1);
   $('seekDown').onclick = () => seek(-1);
+  $('pSeekUp').onclick = () => seek(1);
+  $('pSeekDown').onclick = () => seek(-1);
 
   let briefTimer;
   function setStatusBriefly(msg) {
@@ -548,7 +551,7 @@
     } catch (e) {
       if (current !== st) return;
       if (e && e.name === 'NotAllowedError') { setPState('Tap ▶ to start'); $('playBtn').textContent = '▶'; return; }
-      setPState(url.startsWith('http://') ? 'This station only streams over an insecure link your phone blocks. Try another.' : "This station isn't streaming right now. Try another.", 'err');
+      setPState(url.startsWith('http://') ? 'Phones block this stream. Try another.' : "Not streaming right now. Try another.", 'err');
       $('playBtn').textContent = '▶';
     }
     updateMediaSession();
