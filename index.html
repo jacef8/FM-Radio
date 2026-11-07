@@ -252,18 +252,67 @@
   // ---- Loading ----
   function setStatus(html) { const el = $('status'); el.innerHTML = html; el.hidden = !html; }
 
+  // Work out the city/state for a GPS fix (free, no key). Cached so it runs once per area.
+  async function placeFor(pos) {
+    const key = pos.lat.toFixed(2) + ',' + pos.lon.toFixed(2);
+    const cached = store.get('place', null);
+    if (cached && cached.key === key) return cached;
+    try {
+      const ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${pos.lat}&longitude=${pos.lon}&localityLanguage=en`, { signal: ctrl.signal });
+      const j = await r.json();
+      const place = { key, city: j.city || j.locality || '', state: j.principalSubdivision || '',
+        stateCode: (j.principalSubdivisionCode || '').split('-')[1] || '', country: j.countryCode || '' };
+      store.set('place', place);
+      return place;
+    } catch { return null; }
+  }
+
+  // The directory only has map coordinates for about half its stations, so a GPS-radius search
+  // alone misses many big local ones. Also search by your state and city, then merge.
   async function loadNearby() {
     if (!here) { askLocation(); return; }
+    const at = here;
     $('where').textContent = `${here.label || 'Your location'} · within ${radiusMi} mi`;
     setStatus('<span class="spin"></span>');
     renderLists([]);
+    const base = { hidebroken: 'true', order: 'clickcount', reverse: 'true' };
     try {
-      const raw = await api('/json/stations/search', {
-        geo_lat: here.lat.toFixed(4), geo_long: here.lon.toFixed(4),
-        geo_distance: Math.round(radiusMi * KM_PER_MI * 1000), // meters
-        hidebroken: 'true', has_geo_info: 'true', order: 'clickcount', reverse: 'true', limit: 300
-      });
-      stations = dedupe(raw.map(normalize)).sort((a, b) => (a.mi ?? 1e9) - (b.mi ?? 1e9));
+      const [geoRaw, place] = await Promise.all([
+        api('/json/stations/search', { ...base, geo_lat: at.lat.toFixed(4), geo_long: at.lon.toFixed(4),
+          geo_distance: Math.round(radiusMi * KM_PER_MI * 1000), has_geo_info: 'true', limit: 300 }),
+        placeFor(at)
+      ]);
+      if (at !== here) return;
+      let city = place && place.city, state = place && place.state, cc = (place && place.country) || 'US';
+      if (!state) {
+        // No place lookup: take the most common full state name among the nearby stations.
+        const counts = {};
+        geoRaw.forEach(r => { if (r.state && r.state.length > 2) counts[r.state] = (counts[r.state] || 0) + 1; });
+        state = (Object.entries(counts).sort((x, y) => y[1] - x[1])[0] || [])[0];
+        cc = (geoRaw[0] && geoRaw[0].countrycode) || cc;
+      }
+      if (city || state) { here.label = city ? `Near ${city}` : `In ${state}`; store.set('lastLocation', here);
+        $('where').textContent = `${here.label} · within ${radiusMi} mi`; }
+
+      const extra = [];
+      const q = p => api('/json/stations/search', { ...base, countrycode: cc, limit: 500, ...p }).catch(() => []);
+      if (state) extra.push(q({ state }));
+      if (place && place.stateCode) extra.push(q({ state: place.stateCode, stateExact: 'true' }));
+      if (city) extra.push(q({ state: city }), q({ name: city }));
+      const more = (await Promise.all(extra)).flat();
+      if (at !== here) return;
+
+      const stateAlts = [state, place && place.stateCode].filter(Boolean).map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const elsewhereRe = stateAlts.length ? new RegExp(`,\\s*(${stateAlts.join('|')})\\b`, 'i') : null;
+      const cityRe = city ? new RegExp(city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : null;
+      const all = dedupe([...geoRaw, ...more].map(normalize))
+        .filter(st => st.mi == null || st.mi <= radiusMi)       // drop ones we know are too far
+        .map(st => { if (st.mi == null && cityRe && (cityRe.test(st.name) || cityRe.test(st.city))) st.local = city; return st; })
+        // A name like "WIKY 104.1 Evansville, IN" places a station in another city: leave it out.
+        .filter(st => !(st.mi == null && !st.local && elsewhereRe && elsewhereRe.test(st.name)));
+      const rank = st => st.mi != null ? st.mi : st.local ? radiusMi + 1 : radiusMi + 2;
+      stations = all.sort((x, y) => rank(x) - rank(y));
       if (!stations.length) {
         setStatus(`No stations listed within ${radiusMi} miles.<br><button class="btn" id="widen">Search wider</button>`);
         $('widen').onclick = () => { setRadius(Math.min(200, radiusMi * 2)); loadNearby(); };
@@ -315,21 +364,7 @@
       here = fresh;
       store.set('lastLocation', here);
       if (tab === 'near') loadNearby();
-      reverseLabel();
     }, () => { if (!quiet) noLocation(manual); }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 10 * 60 * 1000 });
-  }
-
-  // Best-effort place name using the stations themselves: most common state among the closest ones.
-  function reverseLabel() {
-    setTimeout(() => {
-      const near = stations.filter(s => s.city && s.mi != null && s.mi < 40).slice(0, 15);
-      if (!near.length) return;
-      const counts = {};
-      near.forEach(s => counts[s.city] = (counts[s.city] || 0) + 1);
-      const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-      here.label = `Near ${top}`; store.set('lastLocation', here);
-      if (tab === 'near') $('where').textContent = `${here.label} · within ${radiusMi} mi`;
-    }, 2500);
   }
 
   function noLocation(manual) {
@@ -354,8 +389,8 @@
   function stationLI(st) {
     const bits = [];
     if (st.mi != null) bits.push(st.mi < 1 ? '<1 mi' : Math.round(st.mi) + ' mi');
-    if (st.city) bits.push(esc(st.city));
-    const genre = st.tags.split(',').map(t => t.trim()).filter(t => t && !/^\d/.test(t) && !/^(fm|am|radio)$/i.test(t))[0];
+    if (st.mi == null && st.local) bits.push(esc(st.local)); else if (st.city) bits.push(esc(st.city));
+    const genre = st.tags.split(',').map(t => t.trim()).filter(t => t && !/^\d/.test(t) && !/^(fm|am|radio)$/i.test(t) && t.toLowerCase() !== (st.local || st.city || '').toLowerCase())[0];
     if (genre) bits.push(esc(genre));
     const isFav = !!favs[st.id];
     return `<li class="station${current && current.id === st.id ? ' playing' : ''}" data-id="${esc(st.id)}">
