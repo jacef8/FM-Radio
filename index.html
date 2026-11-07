@@ -411,13 +411,32 @@
       $('freq').innerHTML = `${f}<small>AM</small>`;
     }
   }
+  // Seek walks the station list in the order it's shown: FM by frequency, then AM, then
+  // stations whose listing doesn't give a frequency. Stepping by position (not by number)
+  // means two stations on the same frequency are both reachable, and seek never gets stuck.
+  function seekOrder() {
+    const withF = visible.filter(s => s.freq).sort((a, b) =>
+      a.freq.band === b.freq.band ? a.freq.f - b.freq.f : a.freq.band === 'FM' ? -1 : 1);
+    return [...withF, ...visible.filter(s => !s.freq)];
+  }
   function seek(dir) {
-    const list = fmStations();
-    if (!list.length) { setStatusBriefly('No local stations with a known FM frequency yet.'); return; }
-    const from = current && current.freq && current.freq.band === 'FM' ? current.freq.f : tunedFM;
-    let next = dir > 0 ? list.find(s => s.freq.f > from + 0.01) : [...list].reverse().find(s => s.freq.f < from - 0.01);
-    if (!next) next = dir > 0 ? list[0] : list[list.length - 1]; // wrap around the band
-    play(next);
+    const list = seekOrder();
+    if (!list.length) { setStatusBriefly('No stations loaded yet. Try widening the range.'); return; }
+    let i = current ? list.findIndex(s => s.id === current.id) : -1;
+    if (i === -1) {
+      // Not on a listed station yet: start from where the dial needle sits.
+      const fm = list.filter(s => s.freq && s.freq.band === 'FM');
+      const start = dir > 0 ? fm.find(s => s.freq.f > tunedFM + 0.01) : [...fm].reverse().find(s => s.freq.f < tunedFM - 0.01);
+      i = start ? list.indexOf(start) : (dir > 0 ? 0 : list.length - 1);
+    } else {
+      i = (i + dir + list.length) % list.length; // wrap around the band
+    }
+    if (list.length === 1 && current && list[0].id === current.id) {
+      setStatusBriefly('This is the only station found. Widen the range to find more.'); return;
+    }
+    play(list[i]);
+    const el = document.querySelector(`.station[data-id="${CSS.escape(list[i].id)}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
   // Tap or drag on the dial to tune to the nearest station.
   function dialTune(clientX) {
@@ -462,7 +481,7 @@
     $('pName').textContent = (st.freq ? freqText(st.freq) + ' · ' : '') + st.name;
     $('pLogo').innerHTML = logoHTML(st);
     $('playBtn').disabled = false;
-    if (st.freq) setNeedle(st.freq.f, st.freq.band);
+    if (st.freq) setNeedle(st.freq.f, st.freq.band); else $('freq').innerHTML = '<small>STREAM</small>';
     document.querySelectorAll('.station.playing').forEach(el => el.classList.remove('playing'));
     document.querySelectorAll(`.station[data-id="${CSS.escape(st.id)}"]`).forEach(el => el.classList.add('playing'));
     setPState('Tuning in…');
@@ -502,7 +521,7 @@
 
   audio.addEventListener('playing', () => { setPState('Live', 'live'); $('playBtn').textContent = '❚❚'; $('playBtn').setAttribute('aria-label', 'Pause'); });
   audio.addEventListener('waiting', () => setPState('Buffering…'));
-  audio.addEventListener('pause', () => { if (current) { setPState('Paused'); $('playBtn').textContent = '▶'; $('playBtn').setAttribute('aria-label', 'Play'); } });
+  audio.addEventListener('pause', () => { if (current) { if ($('pState').className !== 'err') setPState('Paused'); $('playBtn').textContent = '▶'; $('playBtn').setAttribute('aria-label', 'Play'); } });
 
   function togglePlay() {
     if (!current) return;
