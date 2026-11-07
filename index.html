@@ -20,7 +20,7 @@
     --safe-b: env(safe-area-inset-bottom, 0px);
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; background: var(--bg); color: var(--text);
+  html, body { overflow-anchor: none; margin: 0; background: var(--bg); color: var(--text);
     font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   body { padding-bottom: calc(150px + var(--safe-b)); }
   button { font: inherit; color: inherit; cursor: pointer; }
@@ -133,7 +133,7 @@
   <div id="status" class="status" hidden></div>
   <div id="withFreq"><div class="section-title">On the FM / AM dial</div><ul class="list" id="listFreq"></ul></div>
   <div id="noFreq"><div class="section-title">Other local streams</div><ul class="list" id="listOther"></ul></div>
-  <p class="note">Stations stream over the internet, so this works anywhere you have data. Directory by
+  <p class="note">Stations stream over the internet, so this works anywhere you have data. Version 5 · Directory by
     <a href="https://www.radio-browser.info" target="_blank" rel="noopener">radio-browser.info</a>.</p>
 </main>
 
@@ -472,7 +472,11 @@
     if (list.length === 1 && current && list[0].id === current.id) {
       setStatusBriefly('This is the only station found. Widen the range to find more.'); return;
     }
-    play(list[i]);  // don't scroll: keep the seek buttons under your thumb
+    // Keep the page exactly where it is so the seek buttons stay under your thumb.
+    const y = window.scrollY;
+    play(list[i]);
+    const hold = () => { if (window.scrollY !== y) window.scrollTo(0, y); };
+    requestAnimationFrame(hold); setTimeout(hold, 150); setTimeout(hold, 600);
   }
   // Tap or drag on the dial to tune to the nearest station.
   function dialTune(clientX) {
@@ -488,6 +492,7 @@
   $('dial').addEventListener('pointerdown', e => { dragging = dialTune(e.clientX); $('dial').setPointerCapture(e.pointerId); });
   $('dial').addEventListener('pointermove', e => { if (dragging !== null) dragging = dialTune(e.clientX); });
   $('dial').addEventListener('pointerup', () => { if (dragging) play(dragging); dragging = null; });
+  document.querySelectorAll('.seek, .pseek').forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));
   $('seekUp').onclick = () => seek(1);
   $('seekDown').onclick = () => seek(-1);
   $('pSeekUp').onclick = () => seek(1);
@@ -643,7 +648,15 @@
   if (here) { loadNearby(); askLocation(false, true); }  // last-known area now, quiet refresh
   else askLocation();
 
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    // When a new version installs, reload once so it takes effect without closing the app.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !reloaded && audio.paused) { reloaded = true; location.reload(); }
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+  }
 })();
 </script>
 </body>

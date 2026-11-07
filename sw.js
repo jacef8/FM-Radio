@@ -1,6 +1,6 @@
 // Caches the app shell so it opens instantly and works as an installed app.
 // Station lists and audio always come from the network.
-const CACHE = 'local-radio-v4';
+const CACHE = 'local-radio-v5';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-180.png', 'icon-maskable.png'];
 
 self.addEventListener('install', e => {
@@ -14,7 +14,9 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   // Network first so updates show up, cache as the offline fallback.
-  e.respondWith(fetch(e.request).then(res => {
+  // cache: 'no-cache' checks with the server every time instead of using the browser's
+  // 10-minute copy, so a new version shows up on the next open.
+  e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(res => {
     const copy = res.clone();
     caches.open(CACHE).then(c => c.put(e.request, copy));
     return res;
